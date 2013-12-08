@@ -1,0 +1,105 @@
+commit 092ca2b6cdd961308805c6ba2fcde4329257c511
+Author: Bertram Felgenhauer <int-e@gmx.de>
+Date:   Sun Feb 22 14:00:14 2015 +0100
+
+    tweaks
+
+diff --git a/src/Hint/Base.hs b/src/Hint/Base.hs
+index 4b01e9c..d372818 100644
+--- a/src/Hint/Base.hs
++++ b/src/Hint/Base.hs
+@@ -209,9 +209,11 @@ mayFail action =
+         case (maybe_res, null es) of
+             (Nothing,True)  -> throwM $ UnknownError "Got no error message"
+             (Nothing,False) -> throwM $ WontCompile (reverse es)
+-            (Just a, True)  -> return a
++            (Just a, _)     -> return a
++{-
+             (Just _, False) -> fail $ "GHC returned a result but said: " ++
+                                       show es
++-}
+ 
+ -- ================= Debugging stuff ===============
+ 
+diff --git a/src/Hint/Compat.hs b/src/Hint/Compat.hs
+index 6e17eb8..2037cfe 100644
+--- a/src/Hint/Compat.hs
++++ b/src/Hint/Compat.hs
+@@ -123,7 +123,13 @@ stringToStringBuffer = return . GHC.stringToStringBuffer
+ 
+ #if __GLASGOW_HASKELL__ >= 610
+ configureDynFlags :: GHC.DynFlags -> GHC.DynFlags
+-configureDynFlags dflags = dflags{GHC.ghcMode    = GHC.CompManager,
++configureDynFlags dflags =
++-- HACK
++#if __GLASGOW_HASKELL__ >= 708
++    (if GHC.dynamicGhc then GHC.addWay' GHC.WayDyn else id)
++#endif
++-- END HACK
++                           dflags{GHC.ghcMode    = GHC.CompManager,
+                                   GHC.hscTarget  = GHC.HscInterpreted,
+                                   GHC.ghcLink    = GHC.LinkInMemory,
+                                   GHC.verbosity  = 0}
+diff --git a/src/Hint/Extension.hs b/src/Hint/Extension.hs
+index 2f0a401..ffff328 100644
+--- a/src/Hint/Extension.hs
++++ b/src/Hint/Extension.hs
+@@ -1,7 +1,8 @@
+ -- this module was automatically generated. do not edit!
+ -- edit util/mk_extensions_mod.hs instead
+ module Hint.Extension (Extension(..),
+-                       knownExtensions, availableExtensions, asExtension)
++                       knownExtensions, availableExtensions, asExtension,
++                       asExtension')
+ 
+ where
+ 
+@@ -12,11 +13,14 @@ availableExtensions :: [Extension]
+ availableExtensions = map asExtension Compat.supportedExtensions
+ 
+ asExtension :: String -> Extension
+-asExtension s = if isKnown s
+-                  then read s
++asExtension s = fst (asExtension' s False)
++
++asExtension' :: String -> Bool -> (Extension, Bool)
++asExtension' s f = if isKnown s
++                  then (read s, f)
+                   else let no_s = "No" ++ s
+-                  in if isKnown no_s then read no_s
+-                                     else UnknownExtension s
++                  in if isKnown no_s then (read no_s, not f)
++                                     else (UnknownExtension s, f)
+   where isKnown e = e `elem` map show knownExtensions
+ 
+ -- | This represents language extensions beyond Haskell 98
+diff --git a/src/Hint/GHC.hs b/src/Hint/GHC.hs
+index 5c24e09..6a007f4 100644
+--- a/src/Hint/GHC.hs
++++ b/src/Hint/GHC.hs
+@@ -82,6 +82,12 @@ import SrcLoc       ( mkRealSrcLoc )
+ import ConLike      ( ConLike(RealDataCon) )
+ #endif
+ 
++-- HACK
++#if __GLASGOW_HASKELL__ >= 708
++import DynFlags     ( addWay', Way(..), dynamicGhc )
++#endif
++-- END HACK
++
+ #if __GLASGOW_HASKELL__ >= 706
+ type Message = MsgDoc
+ #endif
+diff --git a/src/Hint/InterpreterT.hs b/src/Hint/InterpreterT.hs
+index a42586b..c867ecb 100644
+--- a/src/Hint/InterpreterT.hs
++++ b/src/Hint/InterpreterT.hs
+@@ -138,7 +138,7 @@ initialize args =
+ #endif
+        let toOpt e     = let err = error ("init error: unknown ext:" ++ show e)
+                          in fromMaybe err (lookup e extMap)
+-       let getOptVal e = (asExtension e, GHC.xopt (toOpt e) df2)
++       let getOptVal e = asExtension' e (GHC.xopt (toOpt e) df2)
+        let defExts = map  getOptVal Compat.supportedExtensions
+ #else
+        let defExts = zip availableExtensions (repeat False)
